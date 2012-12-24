@@ -39,7 +39,6 @@ static ngx_int_t ngx_http_limit_upload_input_body_filter(ngx_http_request_t *r,
     ngx_buf_t *buf);
 
 static void ngx_http_limit_upload_delay(ngx_http_request_t *r);
-static void ngx_http_limit_upload_test_reading(ngx_http_request_t *r);
 
 
 static ngx_conf_enum_t ngx_http_limit_upload_log_levels[] = {
@@ -123,6 +122,7 @@ ngx_http_limit_upload_input_body_filter(ngx_http_request_t *r, ngx_buf_t *buf)
     off_t                          excess;
     ngx_int_t                      rc;
     ngx_msec_t                     delay;
+    ngx_http_core_loc_conf_t      *clcf;
     ngx_http_limit_upload_ctx_t   *ctx;
     ngx_http_limit_upload_conf_t  *llcf;
 
@@ -163,9 +163,21 @@ ngx_http_limit_upload_input_body_filter(ngx_http_request_t *r, ngx_buf_t *buf)
 
             ctx->read_event_handler = r->read_event_handler;
             ctx->write_event_handler = r->write_event_handler;
-            r->read_event_handler = ngx_http_limit_upload_test_reading;
+            r->read_event_handler = ngx_http_test_reading;
             r->write_event_handler = ngx_http_limit_upload_delay;
             ngx_add_timer(r->connection->write, delay);
+
+            if (!r->connection->read->ready) {
+                clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+                ngx_add_timer(r->connection->read, clcf->client_body_timeout);
+
+                if (ngx_handle_read_event(r->connection->read, 0) != NGX_OK) {
+                    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+                }
+
+            } else if (r->connection->read->timer_set) {
+                    ngx_del_timer(r->connection->read);
+            }
 
             return NGX_AGAIN;
         }
@@ -362,83 +374,4 @@ ngx_http_limit_upload_delay(ngx_http_request_t *r)
     r->write_event_handler = ctx->write_event_handler;
 
     r->read_event_handler(r);
-}
-
-
-static void
-ngx_http_limit_upload_test_reading(ngx_http_request_t *r)
-{
-    int                n;
-    char               buf[1];
-    ngx_err_t          err;
-    ngx_event_t       *rev;
-    ngx_connection_t  *c;
-
-    c = r->connection;
-    rev = c->read;
-
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0, "http test reading");
-
-#if (NGX_HAVE_KQUEUE)
-
-    if (ngx_event_flags & NGX_USE_KQUEUE_EVENT) {
-
-        if (!rev->pending_eof) {
-            return;
-        }
-
-        rev->eof = 1;
-        c->error = 1;
-        err = rev->kq_errno;
-
-        goto closed;
-    }
-
-#endif
-
-    n = recv(c->fd, buf, 1, MSG_PEEK);
-
-    if (n == 0) {
-        rev->eof = 1;
-        c->error = 1;
-        err = 0;
-
-        goto closed;
-
-    } else if (n == -1) {
-        err = ngx_socket_errno;
-
-        if (err != NGX_EAGAIN) {
-            rev->eof = 1;
-            c->error = 1;
-
-            goto closed;
-        }
-    } else {
-        if (c->read->timer_set) {
-            ngx_del_timer(c->read);
-        }
-    }
-
-    /* aio does not call this handler */
-
-    if ((ngx_event_flags & NGX_USE_LEVEL_EVENT) && rev->active) {
-
-        if (ngx_del_event(rev, NGX_READ_EVENT, 0) != NGX_OK) {
-            ngx_http_finalize_request(r, 0);
-        }
-    }
-
-    return;
-
-closed:
-
-    if (err) {
-        rev->error = 1;
-    }
-
-    ngx_log_error(NGX_LOG_INFO, c->log, err,
-                  "client prematurely closed connection");
-
-    ngx_http_finalize_request(r, 0);
 }
