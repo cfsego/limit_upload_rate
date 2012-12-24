@@ -44,4 +44,5 @@ the module needs the latest input body filter in tengine, so you have to patch n
 the patch file is included with the filename "for-nginx.patch" and is verified under nginx 1.2.5.
 
 ##CHANGES##
+1.0.1     2012-12-24    bugfix: conflict with "client_body_timeout"
 1.0.0     2012-12-07    initial version
