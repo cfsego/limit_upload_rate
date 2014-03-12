@@ -42,6 +42,7 @@ unavailable. the update can be found at https://github.com/taobao/tengine/pull/1
 ##USE WITH NGINX##
 the module needs the latest input body filter in tengine, so you have to patch nginx if you want to use this module.
 the patch file is included with the filename "for-nginx.patch" and is verified under nginx 1.2.5.
+for-nginx-1.4.4.patch is base on nginx 1.4.4 and can be used with nginx 1.5.X
 
 ##CHANGES##
 1.0.1     2012-12-24    bugfix: conflict with "client_body_timeout"
