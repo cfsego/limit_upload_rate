@@ -1,0 +1,115 @@
+diff -ur nginx-1.4.6/src/http/ngx_http.c nginx-1.4.6-patched/src/http/ngx_http.c
+--- nginx-1.4.6/src/http/ngx_http.c	2014-03-04 19:46:45.000000000 +0800
++++ nginx-1.4.6-patched/src/http/ngx_http.c	2014-03-12 18:01:52.000000000 +0800
+@@ -66,12 +66,18 @@
+     ngx_http_conf_addr_t *addr);
+ #endif
+ 
++static ngx_int_t ngx_http_dummy_input_body_filter(ngx_http_request_t *r,
++    ngx_buf_t *buf);
++
+ ngx_uint_t   ngx_http_max_module;
+ 
+ 
+ ngx_int_t  (*ngx_http_top_header_filter) (ngx_http_request_t *r);
+ ngx_int_t  (*ngx_http_top_body_filter) (ngx_http_request_t *r, ngx_chain_t *ch);
+ 
++ngx_int_t  (*ngx_http_top_input_body_filter) (ngx_http_request_t *r,
++    ngx_buf_t *buf);
++
+ 
+ ngx_str_t  ngx_http_html_default_types[] = {
+     ngx_string("text/html"),
+@@ -218,6 +224,10 @@
+     pcf = *cf;
+     cf->ctx = ctx;
+ 
++    /* init input body filter pointer */
++
++    ngx_http_top_input_body_filter = ngx_http_dummy_input_body_filter;
++
+     for (m = 0; ngx_modules[m]; m++) {
+         if (ngx_modules[m]->type != NGX_HTTP_MODULE) {
+             continue;
+@@ -2106,3 +2116,12 @@
+ 
+     return NGX_OK;
+ }
++
++
++static ngx_int_t
++ngx_http_dummy_input_body_filter(ngx_http_request_t *r, ngx_buf_t *buf)
++{
++    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
++                   "http dummy input body filter");
++    return NGX_OK;
++}
+diff -ur nginx-1.4.6/src/http/ngx_http_core_module.h nginx-1.4.6-patched/src/http/ngx_http_core_module.h
+--- nginx-1.4.6/src/http/ngx_http_core_module.h	2014-03-04 19:46:46.000000000 +0800
++++ nginx-1.4.6-patched/src/http/ngx_http_core_module.h	2014-03-12 18:01:52.000000000 +0800
+@@ -521,6 +521,8 @@
+ typedef ngx_int_t (*ngx_http_output_body_filter_pt)
+     (ngx_http_request_t *r, ngx_chain_t *chain);
+ 
++typedef ngx_int_t (*ngx_http_input_body_filter_pt)
++    (ngx_http_request_t *r, ngx_buf_t *buf);
+ 
+ ngx_int_t ngx_http_output_filter(ngx_http_request_t *r, ngx_chain_t *chain);
+ ngx_int_t ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *chain);
+Only in nginx-1.4.6-patched/src/http: ngx_http_core_module.h.orig
+Only in nginx-1.4.6-patched/src/http: ngx_http.c.orig
+diff -ur nginx-1.4.6/src/http/ngx_http.h nginx-1.4.6-patched/src/http/ngx_http.h
+--- nginx-1.4.6/src/http/ngx_http.h	2014-03-04 19:46:45.000000000 +0800
++++ nginx-1.4.6-patched/src/http/ngx_http.h	2014-03-12 18:01:52.000000000 +0800
+@@ -181,4 +181,7 @@
+ extern ngx_http_output_body_filter_pt    ngx_http_top_body_filter;
+ 
+ 
++extern ngx_http_input_body_filter_pt     ngx_http_top_input_body_filter;
++
++
+ #endif /* _NGX_HTTP_H_INCLUDED_ */
+Only in nginx-1.4.6-patched/src/http: ngx_http.h.orig
+diff -ur nginx-1.4.6/src/http/ngx_http_request_body.c nginx-1.4.6-patched/src/http/ngx_http_request_body.c
+--- nginx-1.4.6/src/http/ngx_http_request_body.c	2014-03-04 19:46:46.000000000 +0800
++++ nginx-1.4.6-patched/src/http/ngx_http_request_body.c	2014-03-12 18:05:27.000000000 +0800
+@@ -1056,9 +1056,8 @@
+ static ngx_int_t
+ ngx_http_request_body_save_filter(ngx_http_request_t *r, ngx_chain_t *in)
+ {
+-#if (NGX_DEBUG)
++    ngx_int_t                  rc;
+     ngx_chain_t               *cl;
+-#endif
+     ngx_http_request_body_t   *rb;
+ 
+     rb = r->request_body;
+@@ -1095,5 +1094,28 @@
+         return NGX_HTTP_INTERNAL_SERVER_ERROR;
+     }
+ 
++    for (cl = in; cl; cl = cl->next) {
++        rc = ngx_http_top_input_body_filter(r, cl->buf);
++        if (rc != NGX_OK) {
++            if (rc > NGX_OK && rc < NGX_HTTP_SPECIAL_RESPONSE) {
++                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
++                              "input filter: return code 1xx or 2xx "
++                              "will cause trouble and is converted to 500");
++            }
++
++            /**
++             * NGX_OK: success and continue;
++             * NGX_ERROR: failed and exit;
++             * NGX_AGAIN: not ready and retry later.
++             */
++
++            if (rc < NGX_HTTP_SPECIAL_RESPONSE && rc != NGX_AGAIN) {
++                rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
++            }
++
++            return rc;
++        }
++    }
++
+     return NGX_OK;
+ }
