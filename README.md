@@ -38,13 +38,13 @@ Sets the initial amount after which the further transmission of a request body f
 ##INSTALL
 
 ###for tengine
-./configure --add-module=limit_upload_rate
-make
+    ./configure --add-module=limit_upload_rate
+    make
 
 ###for nginx
-patch -p1 < for-nginx-1.4.4.patch
-./configure --add-module=limit_upload_rate
-make
+    patch -p1 < for-nginx-1.4.4.patch
+    ./configure --add-module=limit_upload_rate
+    make
 
 ##USE WITH TENGINE##
 the module needs the latest input body filter in tengine, otherwise the functionality of this module is totally
